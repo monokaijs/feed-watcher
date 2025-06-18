@@ -9,10 +9,11 @@ import {Database, Palette} from 'lucide-react';
 
 export default function Settings() {
   const dispatch = useAppDispatch();
-  const {
-    theme,
-    feedWatcherEnabled,
-  } = useAppSelector((state) => state.app);
+  const { theme } = useAppSelector((state) => state.app);
+  const { feeds } = useAppSelector((state) => state.watcher);
+
+  // Derive feedWatcherEnabled from watcher state
+  const feedWatcherEnabled = feeds.some(feed => feed.isActive);
 
   return (
     <div className="space-y-6">

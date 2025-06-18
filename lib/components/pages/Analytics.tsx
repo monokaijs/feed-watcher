@@ -5,12 +5,17 @@ import { Button } from '@/lib/components/ui/button';
 import { BarChart3, TrendingUp, Calendar, Download, Eye, Github } from 'lucide-react';
 
 export default function Analytics() {
-  const { 
-    feedWatcherEnabled, 
-    watchedFeeds, 
-    lastSyncTime, 
-    backupSettings 
-  } = useAppSelector((state) => state.app);
+  const { feeds, workerStatus } = useAppSelector((state) => state.watcher);
+
+  // Derive analytics data from watcher state
+  const watchedFeeds = feeds;
+  const feedWatcherEnabled = feeds.some(feed => feed.isActive);
+  const lastSyncTime = workerStatus?.lastScanTime || null;
+  const backupSettings = {
+    autoBackup: feeds.some(feed => feed.backupEnabled),
+    backupInterval: feeds.length > 0 ? Math.min(...feeds.map(f => f.backupInterval)) : 60,
+    githubRepo: feeds.find(feed => feed.backupRepo)?.backupRepo || null
+  };
 
   // Mock data for demonstration
   const mockAnalytics = {
