@@ -1,0 +1,125 @@
+name: Create Release
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      release_id: ${{ steps.create_release.outputs.id }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            echo "tag=v${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.get_version.outputs.tag }}
+          release_name: Release ${{ steps.get_version.outputs.tag }}
+          body: |
+            ### Installation
+            1. Download the appropriate zip file for your browser
+            2. Extract the zip file
+            3. Load the extension in developer mode
+          draft: false
+          prerelease: false
+
+  build-and-upload:
+    needs: create-release
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        browser: [chrome, firefox]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Get version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            echo "tag=v${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build extension for ${{ matrix.browser }}
+        run: |
+          if [ "${{ matrix.browser }}" = "firefox" ]; then
+            npm run build:firefox
+          else
+            npm run build
+          fi
+
+      - name: Create zip for ${{ matrix.browser }}
+        run: |
+          if [ "${{ matrix.browser }}" = "firefox" ]; then
+            npm run zip:firefox
+          else
+            npm run zip
+          fi
+
+      - name: Find and rename zip file
+        id: prepare-zip
+        run: |
+          if [ "${{ matrix.browser }}" = "firefox" ]; then
+            ZIP_FILE=$(find .output -name "*firefox*.zip" | head -1)
+          else
+            ZIP_FILE=$(find .output -name "*.zip" ! -name "*firefox*" | head -1)
+          fi
+          
+          NEW_NAME="feed-watcher-${{ matrix.browser }}-${{ steps.get_version.outputs.tag }}.zip"
+          cp "$ZIP_FILE" "$NEW_NAME"
+          
+          echo "zip_file=$NEW_NAME" >> $GITHUB_OUTPUT
+          echo "Prepared zip file: $NEW_NAME"
+
+      - name: Upload Release Asset
+        run: |
+          gh release upload ${{ steps.get_version.outputs.tag }} "${{ steps.prepare-zip.outputs.zip_file }}" --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,118 @@
+name: Build Production Extension
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  release:
+    types: [ published ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        browser: [chrome, firefox]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: yarn install
+
+    - name: Type check
+      run: npm run compile
+
+    - name: Build extension for ${{ matrix.browser }}
+      run: |
+        if [ "${{ matrix.browser }}" = "firefox" ]; then
+          npm run build:firefox
+        else
+          npm run build
+        fi
+
+    - name: Create zip for ${{ matrix.browser }}
+      run: |
+        if [ "${{ matrix.browser }}" = "firefox" ]; then
+          npm run zip:firefox
+        else
+          npm run zip
+        fi
+
+    - name: Get package version
+      id: package-version
+      run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+    - name: Get commit SHA
+      id: commit-sha
+      run: echo "sha=$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_OUTPUT
+
+    - name: Determine artifact name
+      id: artifact-name
+      run: |
+        if [ "$GITHUB_EVENT_NAME" = "release" ]; then
+          echo "name=feed-watcher-${{ matrix.browser }}-v${{ steps.package-version.outputs.version }}" >> $GITHUB_OUTPUT
+        else
+          echo "name=feed-watcher-${{ matrix.browser }}-${{ steps.commit-sha.outputs.sha }}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Find zip file
+      id: find-zip
+      run: |
+        if [ "${{ matrix.browser }}" = "firefox" ]; then
+          ZIP_FILE=$(find .output -name "*firefox*.zip" | head -1)
+        else
+          ZIP_FILE=$(find .output -name "*.zip" ! -name "*firefox*" | head -1)
+        fi
+        echo "zip_file=$ZIP_FILE" >> $GITHUB_OUTPUT
+        echo "Found zip file: $ZIP_FILE"
+
+    - name: Upload extension artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.artifact-name.outputs.name }}
+        path: ${{ steps.find-zip.outputs.zip_file }}
+        retention-days: 30
+
+    - name: Upload to release (if release event)
+      if: github.event_name == 'release'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.PAT }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ${{ steps.find-zip.outputs.zip_file }}
+        asset_name: ${{ steps.artifact-name.outputs.name }}.zip
+        asset_content_type: application/zip
+
+  summary:
+    needs: build
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+    - name: Build Summary
+      run: |
+        echo "## 🚀 Extension Build Complete" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Build Status" >> $GITHUB_STEP_SUMMARY
+        echo "- **Chrome**: ${{ needs.build.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Firefox**: ${{ needs.build.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
+        echo "The built extension zip files are available in the **Artifacts** section above." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        if [ "$GITHUB_EVENT_NAME" = "release" ]; then
+          echo "### Release" >> $GITHUB_STEP_SUMMARY
+          echo "Extension zip files have been automatically attached to the release." >> $GITHUB_STEP_SUMMARY
+        fi
